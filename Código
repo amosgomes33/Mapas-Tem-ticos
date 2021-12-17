@@ -1,0 +1,121 @@
+from google.colab import drive
+
+drive.mount('/content/drive')
+
+!pip install streamlit
+!pip install pyngrok
+!pip install folium
+!pip install streamlit-folium
+!pip install scikit-mobility
+
+%%writefile app.py
+import streamlit as st
+from streamlit_folium import folium_static
+import folium
+from folium import plugins
+from folium.plugins import HeatMap
+import geopandas as gpd
+import pandas as pd
+import plotly.express as px
+
+PAGE_CONFIG = {"page_title":"Aplicação de Mapas com Pandas","page_icon":":smiley:","layout":"centered"}
+st.set_page_config(**PAGE_CONFIG)
+
+def main():
+  polygons = gpd.read_file('/content/drive/MyDrive/Colab Notebooks/Estados.geojson')
+  points = gpd.read_file('/content/drive/MyDrive/Colab Notebooks/PETI_Beneficiados.geojson')
+
+  # Essa cópia é os beneficiários sejam designados aos polígonos dos estados
+  pts = points.copy()
+  pts_in_polys = []
+
+  # Conta quantos pontos há em cada polígono
+  for i, poly in polygons.iterrows():
+    pts_in_this_poly = []
+    for j, pt in pts.iterrows():
+        if poly.geometry.contains(pt.geometry):
+            pts_in_this_poly.append(pt.geometry)
+            pts = pts.drop([j])
+    pts_in_polys.append(len(pts_in_this_poly))
+  # Adiciona o número de pontos ao data frame dos polígonos
+  polygons['num_pto'] = gpd.GeoSeries(pts_in_polys)
+  
+  menu = ["Home","Mapa Coroplético","Mapa de Calor","Mapa de contagem"]
+  choice = st.sidebar.selectbox('Menu',menu)
+	
+  if choice == 'Home':
+    st.title("Cartografia Temática com dados do Programa de Erradicação do Trabalho Infantil")
+    st.subheader("Dados de pagamentos por estados - 2018-2021")
+    st.table(polygons.describe()) #Tabela com os dados sumarizados
+	# Cria a barra para a definição do número de estacionamentos no histograma
+  values = st.sidebar.slider("Número de pessoas beneficiadas", float(polygons.num_pto.min()), 452., (10., 452.))
+  f = px.histogram(polygons.query(f"num_pto.between{values}", engine='python'), x="num_pto", title="Distribuição de Beneficários por estado")
+  f.update_xaxes(title="Beneficiários")
+  f.update_yaxes(title="Estados")
+  st.plotly_chart(f) 
+	#chama o mapa usando o Folium
+  if choice == 'Mapa Coroplético':
+    with st.echo():
+      m = folium.Map (location = [-15.8,-47.8],tiles = 'Stamen Terrain',zoom_start =  4)
+      bins = list(polygons['num_pto'].quantile([0, 0.25, 0.5, 0.75, 1]))
+      folium.Choropleth(
+        geo_data=polygons,
+          name='Mapa Cloroplético',
+          columns=['nome', 'num_pto'],
+          data=polygons,
+          key_on='feature.properties.nome',
+          fill_color='YlOrRd',
+          legend_name='Pessoas Beneficiadas',
+          bins=bins,
+          reset=True
+        ).add_to(m)
+      folium.LayerControl().add_to(m)
+		  #passa o folium para o streamlit
+      folium_static(m)
+
+  if choice == 'Mapa de Calor':
+    with st.echo():
+      beneficiados = '/content/drive/MyDrive/Colab Notebooks/PETI_Beneficiados.geojson'
+      df = gpd.read_file(beneficiados)
+      locations = []
+      m2 = folium.Map (location = [-15.8,-47.8],
+                tiles = 'OpenStreetMap',
+                zoom_start =  4
+                )
+      for idx, row in df.iterrows():
+        locations.append([row['geometry'].y, row['geometry'].x])
+
+      HeatMap(locations,name = 'Mapa de Calor').add_to(m2)
+
+      folium.LayerControl().add_to(m2)
+      folium_static(m2)
+  elif choice == 'Mapa de contagem':
+    with st.echo():
+      beneficiados2 = '/content/drive/MyDrive/Colab Notebooks/PETI_Beneficiados.geojson'
+      m3 = folium.Map (location = [-15.8,-47.8],
+                tiles = 'OpenStreetMap',
+                zoom_start =  4
+                )
+      style = {'fillColor': '#FF000000', 'color': '#A9A9A9'}
+      folium.GeoJson(
+                beneficiados2,
+                name='beneficiarios',
+                style_function=lambda x: style
+      ).add_to(m3)
+      folium_static(m3)
+
+if __name__ == '__main__':
+    main()
+    
+!ls
+
+!streamlit run --server.port 80 app.py &>/dev/null&
+
+from pyngrok import ngrok
+!ngrok authtoken 22NKS80M02nuZHhZo6lYvnxkHoP_3byRQ1GyWT2gaGe5uZLgW
+# Setup a tunnel to the streamlit port 8501
+public_url = ngrok.connect(port='8501')
+public_url
+
+from pyngrok import ngrok
+ngrok.kill()
